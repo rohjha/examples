@@ -14,22 +14,20 @@ import data
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model')
 
 # Model parameters.
-parser.add_argument('--data', type=str, default='./data/wikitext-2',
+parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',
+                    help='location of the corpus to get data from')
+parser.add_argument('--data', type=str, default='./data/wikitext-103',
                     help='location of the data corpus')
 parser.add_argument('--checkpoint', type=str, default='./model.pt',
                     help='model checkpoint to use')
-parser.add_argument('--outf', type=str, default='generated.txt',
-                    help='output file for generated text')
-parser.add_argument('--words', type=int, default='1000',
-                    help='number of words to generate')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
-parser.add_argument('--temperature', type=float, default=1.0,
-                    help='temperature - higher will increase diversity')
-parser.add_argument('--log-interval', type=int, default=100,
-                    help='reporting interval')
+parser.add_argument('--bptt', type=int, default=12,
+                    help='sequence length')
+parser.add_argument('--num_out', type=int, default=15,
+                    help='number of alternatives to show')       
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -40,28 +38,37 @@ if torch.cuda.is_available():
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
-if args.temperature < 1e-3:
-    parser.error("--temperature has to be greater or equal 1e-3")
-
 with open(args.checkpoint, 'rb') as f:
     model = torch.load(f).to(device)
 model.eval()
 
-corpus = data.Corpus(args.data)
+corpus = data.Corpus(args.dict_data, args.data)
+print("yo")
+
 ntokens = len(corpus.dictionary)
 hidden = model.init_hidden(1)
-input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+print("yo")
 
-with open(args.outf, 'w') as outf:
-    with torch.no_grad():  # no tracking history
-        for i in range(args.words):
-            output, hidden = model(input, hidden)
-            word_weights = output.squeeze().div(args.temperature).exp().cpu()
-            word_idx = torch.multinomial(word_weights, 1)[0]
-            input.fill_(word_idx)
-            word = corpus.dictionary.idx2word[word_idx]
+# Assumes "<blank>" is one of the words if we need a blank
+def tokenize_str(str):
+    words = str.split()
+    if len(words) >= args.bptt:
+        words = words[:args.bptt]
+    
+    ids = [corpus.dictionary.get_id(word) for word in words]
+    return ids
 
-            outf.write(word + ('\n' if i % 20 == 19 else ' '))
+input_original = tokenize_str("He <blank> the room suddenly and went outside to the park <eos>")
+input = []
+for token in input_original:
+    input.append([token])
+input = torch.LongTensor(input).to(device)
 
-            if i % args.log_interval == 0:
-                print('| Generated {}/{} words'.format(i, args.words))
+with torch.no_grad():  # no tracking history
+    output, hidden = model(input, hidden)
+    word_weights = output.squeeze().exp().to(device)
+    
+    top_ids = torch.topk(word_weights, args.num_out)[1]
+    import pdb; pdb.set_trace()
+    for id in top_ids:
+        print(corpus.dictionary.idx2word[id])

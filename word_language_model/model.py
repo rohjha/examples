@@ -1,12 +1,20 @@
 import torch.nn as nn
+import embeddings
+
+# TODO: Use ELMo
 
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False):
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False, embed=None):
         super(RNNModel, self).__init__()
         self.drop = nn.Dropout(dropout)
-        self.encoder = nn.Embedding(ntoken, ninp)
+
+        if embed is None:
+            self.encoder = nn.Embedding(ntoken, ninp)
+        else:
+            self.encoder = embed
+
         if rnn_type in ['LSTM', 'GRU']:
             self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
         else:
@@ -29,24 +37,27 @@ class RNNModel(nn.Module):
                 raise ValueError('When using the tied flag, nhid must be equal to emsize')
             self.decoder.weight = self.encoder.weight
 
-        self.init_weights()
+        from_scratch = embed == None
+        self.init_weights(from_scratch)
 
         self.rnn_type = rnn_type
         self.nhid = nhid
         self.nlayers = nlayers
 
-    def init_weights(self):
+    def init_weights(self, from_scratch):
         initrange = 0.1
-        self.encoder.weight.data.uniform_(-initrange, initrange)
+        if (from_scratch):
+            self.encoder.weight.data.uniform_(-initrange, initrange)
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden):
-        emb = self.drop(self.encoder(input))
+        emb = (self.drop(self.encoder(input))).detach()
         output, hidden = self.rnn(emb, hidden)
-        output = self.drop(output)
-        decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
-        return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
+        output = self.drop(output)[-1]
+        decoded = self.decoder(output)
+        #import pdb; pdb.set_trace()
+        return decoded, hidden
 
     def init_hidden(self, bsz):
         weight = next(self.parameters())

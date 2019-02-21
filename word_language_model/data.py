@@ -41,6 +41,7 @@ class Corpus(object):
 
         self.dictionary.add_word('<blank>')
         print(len(self.dictionary))
+        print(self.dictionary.idx2word[10])
 
     def tokenize(self, path):
         """Tokenizes a text file."""

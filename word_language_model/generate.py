@@ -58,7 +58,7 @@ def tokenize_str(str):
     ids = [corpus.dictionary.get_id(word) for word in words]
     return ids
 
-input_original = tokenize_str("He <blank> the room suddenly and went outside to the park <eos>")
+input_original = tokenize_str("They left the room and <blank> went out to the field .")
 input = []
 for token in input_original:
     input.append([token])
@@ -68,7 +68,8 @@ with torch.no_grad():  # no tracking history
     output, hidden = model(input, hidden)
     word_weights = output.squeeze().exp().to(device)
     
-    top_ids = torch.topk(word_weights, args.num_out)[1]
-    import pdb; pdb.set_trace()
-    for id in top_ids:
-        print(corpus.dictionary.idx2word[id])
+    res = torch.topk(word_weights, args.num_out)
+    top_ids = res[1]
+    top_props = res[0]
+    for i in range(args.num_out):
+        print("%s, %s" % (corpus.dictionary.idx2word[top_ids[i]], top_props[i]))

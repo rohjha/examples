@@ -16,6 +16,9 @@ import model
 # Things to try:
 #  1. More data (didn't work)
 #  2. Data pipeline is *really* naive right now, and there's a lot that can be done to improve this
+# Two issues to track down:
+#  1. In the experiment to just learn the previous word, it really prefers the last! -- eventually gets there but takes ~20 epochs
+#  2. Outputs don't appear to be a probability distribution... -- not necesarry!
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
 parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',

@@ -56,7 +56,6 @@ class RNNModel(nn.Module):
         output, hidden = self.rnn(emb, hidden)
         output = self.drop(output)[-1]
         decoded = self.decoder(output)
-        #import pdb; pdb.set_trace()
         return decoded, hidden
 
     def init_hidden(self, bsz):

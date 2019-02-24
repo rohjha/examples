@@ -15,9 +15,9 @@ parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model'
 
 # Model parameters.
 parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',
-                    help='location of the corpus to get data from')
-parser.add_argument('--data', type=str, default='./data/wikitext-103',
-                    help='location of the data corpus')
+                    help='location of the corpus from which to load the dictionary')
+parser.add_argument('--data', type=str, default='./data/wikitext-2',
+                    help='location of the corpus from which to load the dictionary')
 parser.add_argument('--checkpoint', type=str, default='./model.pt',
                     help='model checkpoint to use')
 parser.add_argument('--seed', type=int, default=1111,
@@ -58,7 +58,7 @@ def tokenize_str(str):
     ids = [corpus.dictionary.get_id(word) for word in words]
     return ids
 
-input_original = tokenize_str("They left the room and <blank> went out to the field .")
+input_original = tokenize_str("They found lots of <blank> in the castle .")
 input = []
 for token in input_original:
     input.append([token])

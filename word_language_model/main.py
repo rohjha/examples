@@ -22,7 +22,7 @@ import model
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
 parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',
-                    help='location of the corpus to get data from')
+                    help='location of the corpus from which to load the dictionary')
 parser.add_argument('--data', type=str, default='./data/wikitext-103',
                     help='location of the data corpus')
 parser.add_argument('--model', type=str, default='LSTM',
@@ -56,7 +56,7 @@ parser.add_argument('--save', type=str, default='model.pt',
 parser.add_argument('--onnx-export', type=str, default='',
                     help='path to export the final model in onnx format')
 parser.add_argument('--embed', type=str, default='None',
-                    help="pretrained embeddings to use (None, ELMo, Glove)")
+                    help="pretrained embeddings to use (None, Glove)")
 parser.add_argument('--glove_data', type=str, default='/course/cs2952d/data/hw3/',
                     help='location of the glove vectors')
 args = parser.parse_args()
@@ -105,10 +105,7 @@ test_data = batchify(corpus.test, eval_batch_size)
 # Build the model
 ###############################################################################
 
-if args.embed.lower() == "elmo":
-    lookup = embeddings.Elmo(corpus.dictionary.idx2word, device=device)
-    emsize = embeddings.sizes["elmo"]
-elif args.embed.lower() == "glove":
+if args.embed.lower() == "glove":
     lookup = embeddings.Glove(args.glove_data, corpus.dictionary.idx2word, device=device)
     emsize = embeddings.sizes["glove"]
 else:
@@ -144,7 +141,6 @@ def repackage_hidden(h):
 # to the seq_len dimension in the LSTM.
 
 def get_batch(source, i):
-    # TODO: Is this randomly sampling?
     seq_len = min(args.bptt, len(source) - 1 - i)
     data = source[i:i+seq_len].clone()
     blank_index = random.randint(0, seq_len-1)

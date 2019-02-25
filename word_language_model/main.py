@@ -8,39 +8,30 @@ import torch.nn as nn
 import torch.onnx
 import random
 import embeddings
+import pickle
 
-import data
+from torch.utils.data import DataLoader
+
+from tqdm import tqdm
+
+import corpus
 import model
 
-# TODO
-# Things to try:
-#  1. More data (didn't work)
-#  2. Data pipeline is *really* naive right now, and there's a lot that can be done to improve this
-# Two issues to track down:
-#  1. In the experiment to just learn the previous word, it really prefers the last! -- eventually gets there but takes ~20 epochs
-#  2. Outputs don't appear to be a probability distribution... -- not necesarry!
-
-parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
-parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',
-                    help='location of the corpus from which to load the dictionary')
-parser.add_argument('--data', type=str, default='./data/wikitext-103',
-                    help='location of the data corpus')
+parser = argparse.ArgumentParser(description='Fill-in-the-blank model')
+parser.add_argument('--data', type=str, default='/data/course/cs2952d/rjha/data/rsa',
+                    help='location of the corpora and embeddings')
 parser.add_argument('--model', type=str, default='LSTM',
                     help='type of recurrent net (RNN_TANH, RNN_RELU, LSTM, GRU)')
-parser.add_argument('--emsize', type=int, default=200,
-                    help='size of word embeddings, if not pretrained')
 parser.add_argument('--nhid', type=int, default=200,
                     help='number of hidden units per layer')
 parser.add_argument('--nlayers', type=int, default=2,
-                    help='number of layers')
+                    help='number of layers in the encoder')
 parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
 parser.add_argument('--epochs', type=int, default=40,
                     help='upper epoch limit')
 parser.add_argument('--batch_size', type=int, default=40, metavar='N',
                     help='batch size')
-parser.add_argument('--bptt', type=int, default=12,
-                    help='sequence length')
 parser.add_argument('--dropout', type=float, default=0.2,
                     help='dropout applied to layers (0 = no dropout)')
 parser.add_argument('--tied', action='store_true',
@@ -53,13 +44,13 @@ parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
 parser.add_argument('--save', type=str, default='model.pt',
                     help='path to save the final model')
-parser.add_argument('--onnx-export', type=str, default='',
-                    help='path to export the final model in onnx format')
 parser.add_argument('--embed', type=str, default='None',
                     help="pretrained embeddings to use (None, Glove)")
-parser.add_argument('--glove_data', type=str, default='/course/cs2952d/data/hw3/',
-                    help='location of the glove vectors')
 args = parser.parse_args()
+
+# This is a function of the data file. Need to use make_dataset.py to make data files with 
+# a different maximal length.
+max_seq_length = 35
 
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
@@ -73,46 +64,29 @@ device = torch.device("cuda" if args.cuda else "cpu")
 # Load data
 ###############################################################################
 
-corpus = data.Corpus(args.dict_data, args.data)
+modes = ['train', 'test', "valid"]
+train_index = 0; test_index = 1; valid_index = 2
 
-# Starting from sequential data, batchify arranges the dataset into columns.
-# For instance, with the alphabet as the sequence and batch size 4, we'd get
-# ┌ a g m s ┐
-# │ b h n t │
-# │ c i o u │
-# │ d j p v │
-# │ e k q w │
-# └ f l r x ┘.
-# These columns are treated as independent by the model, which means that the
-# dependence of e. g. 'g' on 'f' can not be learned, but allows more efficient
-# batch processing.
-
-def batchify(data, bsz):
-    # Work out how cleanly we can divide the dataset into bsz parts.
-    nbatch = data.size(0) // bsz
-    # Trim off any extra elements that wouldn't cleanly fit (remainders).
-    data = data.narrow(0, 0, nbatch * bsz)
-    # Evenly divide the data across the bsz batches.
-    data = data.view(bsz, -1).t().contiguous()
-    return data.to(device)
-
-eval_batch_size = 10
-train_data = batchify(corpus.train, args.batch_size)
-val_data = batchify(corpus.valid, eval_batch_size)
-test_data = batchify(corpus.test, eval_batch_size)
+# Note: each of these are dicts that map mode -> object, depending on if we're using the training or dev data.
+datasets = {mode: corpus.Corpus(args.data, mode) for mode in modes}
+data_sizes = {mode: len(datasets[mode]) for mode in modes} # useful for averaging loss per batch
+dataloaders = {mode: DataLoader(datasets[mode], batch_size=args.batch_size, shuffle=True, num_workers=6, drop_last=True) for mode in modes}
 
 ###############################################################################
 # Build the model
 ###############################################################################
 
+with open(os.path.join(args.data, "idx2word.dict"), "rb") as f:
+    idx2word = pickle.load(f)
+
 if args.embed.lower() == "glove":
-    lookup = embeddings.Glove(args.glove_data, corpus.dictionary.idx2word, device=device)
+    lookup = embeddings.Glove(args.glove_data, idx2word, device=device)
     emsize = embeddings.sizes["glove"]
 else:
     lookup = None
-    emsize = args.emsize
+    emsize = embeddings.sizes["none"]
 
-ntokens = len(corpus.dictionary)
+ntokens = len(idx2word)
 model = model.RNNModel(args.model, ntokens, emsize, args.nhid, args.nlayers, args.dropout, args.tied, lookup).to(device)
 optimizer = torch.optim.Adam(model.parameters())
 
@@ -145,38 +119,41 @@ def get_batch(source, i):
     data = source[i:i+seq_len].clone()
     blank_index = random.randint(0, seq_len-1)
     target = data[blank_index].clone()
-    data[blank_index].fill_(len(corpus.dictionary) - 1)
+    data[blank_index].fill_(len(idx2word) - 1)
     return data, target
 
+def swap_blanks(batch, seq_lens):
+    return batch, None
 
-def evaluate(data_source):
+def evaluate(mode_index):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0.
-    ntokens = len(corpus.dictionary)
-    hidden = model.init_hidden(eval_batch_size)
+    ntokens = len(idx2word)
+    hidden = model.init_hidden(args.batch_size)
     with torch.no_grad():
-        for i in range(0, data_source.size(0) - 1, args.bptt):
-            data, targets = get_batch(data_source, i)
+        for (vectorized_seq, seq_len) in tqdm(dataloaders[mode_index], desc='{}:{}/{}'.format(modes[mode_index], epoch, args.epochs)):
+            data, targets = get_batch(vectorized_seq, seq_len)
             output, hidden = model(data, hidden)
             output = output
 
             output_flat = output.view(-1, ntokens)
             total_loss += len(data) * criterion(output_flat, targets).item()
             hidden = repackage_hidden(hidden)
-    return total_loss / (len(data_source) - 1)
+    return total_loss / (data_sizes[mode_index] - 1)
 
 
-def train():
+def train(epoch):
     # Turn on training mode which enables dropout.
     model.train()
     total_loss = 0.
     start_time = time.time()
-    ntokens = len(corpus.dictionary)
+    ntokens = len(idx2word)
     hidden = model.init_hidden(args.batch_size)
 
-    for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
-        data, targets = get_batch(train_data, i)
+    batch = 0
+    for (vectorized_seq, seq_len) in tqdm(dataloaders[train_index], desc='{}:{}/{}'.format(modes[train_index], epoch, args.epochs)):
+        data, targets = get_batch(vectorized_seq, seq_len)
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         hidden = repackage_hidden(hidden)
@@ -193,25 +170,17 @@ def train():
         optimizer.step()
 
         total_loss += loss.item()
+        batch += 1
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
-                epoch, batch, len(train_data) // args.bptt,
+                epoch, batch, data_sizes[train_index] // args.bptt,
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             total_loss = 0
             start_time = time.time()
-
-
-def export_onnx(path, batch_size, seq_len):
-    print('The model is also exported in ONNX format at {}'.
-          format(os.path.realpath(args.onnx_export)))
-    model.eval()
-    dummy_input = torch.LongTensor(seq_len * batch_size).zero_().view(-1, batch_size).to(device)
-    hidden = model.init_hidden(batch_size)
-    torch.onnx.export(model, (dummy_input, hidden), path)
 
 
 # Loop over epochs.
@@ -221,8 +190,8 @@ best_val_loss = None
 try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
-        train()
-        val_loss = evaluate(val_data)
+        train(epoch)
+        val_loss = evaluate(valid_index)
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
@@ -246,12 +215,8 @@ with open(args.save, 'rb') as f:
     model.rnn.flatten_parameters()
 
 # Run on test data.
-test_loss = evaluate(test_data)
+test_loss = evaluate(test_index)
 print('=' * 89)
 print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
     test_loss, math.exp(test_loss)))
 print('=' * 89)
-
-if len(args.onnx_export) > 0:
-    # Export the model in ONNX format.
-    export_onnx(args.onnx_export, batch_size=1, seq_len=args.bptt)

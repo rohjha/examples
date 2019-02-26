@@ -26,10 +26,6 @@ with open(args.corpus_location, 'r') as orig, \
 
     random.seed(args.seed)
 
-    train.write('sentence|sequence_length')
-    test.write('sentence|sequence_length')
-    valid.write('sentence|sequence_length')
-
     line_number = 0
     thrown_out = 0
     for line in orig:
@@ -37,9 +33,13 @@ with open(args.corpus_location, 'r') as orig, \
         if line_number % 1000000 == 0:
             print("finished {}m lines".format(line_number / 1000000))
 
-        words = line.split(' ')
+        if '|' in line:
+            thrown_out += 1
+            continue
+
+        words = line.lower().strip('\n').split(' ')
         orig_len = len(words)
-        if (orig_len > args.max_seq_length):
+        if orig_len > args.max_seq_length:
             thrown_out += 1
             continue
 

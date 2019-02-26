@@ -9,13 +9,16 @@ import torch.onnx
 import random
 import embeddings
 import pickle
+import numpy as np
 
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
 
-import corpus
 import model
+import corpus
+
+# TODO: Add dropout back in
 
 parser = argparse.ArgumentParser(description='Fill-in-the-blank model')
 parser.add_argument('--data', type=str, default='/data/course/cs2952d/rjha/data/rsa',
@@ -32,8 +35,6 @@ parser.add_argument('--epochs', type=int, default=40,
                     help='upper epoch limit')
 parser.add_argument('--batch_size', type=int, default=40, metavar='N',
                     help='batch size')
-parser.add_argument('--dropout', type=float, default=0.2,
-                    help='dropout applied to layers (0 = no dropout)')
 parser.add_argument('--tied', action='store_true',
                     help='tie the word embedding and softmax weights')
 parser.add_argument('--seed', type=int, default=1111,
@@ -65,31 +66,36 @@ device = torch.device("cuda" if args.cuda else "cpu")
 ###############################################################################
 
 modes = ['train', 'test', "valid"]
-train_index = 0; test_index = 1; valid_index = 2
 
 # Note: each of these are dicts that map mode -> object, depending on if we're using the training or dev data.
 datasets = {mode: corpus.Corpus(args.data, mode) for mode in modes}
 data_sizes = {mode: len(datasets[mode]) for mode in modes} # useful for averaging loss per batch
+
+print("Creating dataloaders")
 dataloaders = {mode: DataLoader(datasets[mode], batch_size=args.batch_size, shuffle=True, num_workers=6, drop_last=True) for mode in modes}
 
 ###############################################################################
 # Build the model
 ###############################################################################
 
-with open(os.path.join(args.data, "idx2word.dict"), "rb") as f:
-    idx2word = pickle.load(f)
+idx2word = np.load(os.path.join(args.data, "idx2word.npy")).item()
+word2idx = np.load(os.path.join(args.data, "word2idx.npy")).item()
+
+# TODO: This is a dumb decision that might make some difference: representing blank with underscore
+blank_idx = word2idx['__']
 
 if args.embed.lower() == "glove":
-    lookup = embeddings.Glove(args.glove_data, idx2word, device=device)
+    lookup = embeddings.Glove(args.data, idx2word, device=device)
     emsize = embeddings.sizes["glove"]
 else:
     lookup = None
     emsize = embeddings.sizes["none"]
 
 ntokens = len(idx2word)
-model = model.RNNModel(args.model, ntokens, emsize, args.nhid, args.nlayers, args.dropout, args.tied, lookup).to(device)
-optimizer = torch.optim.Adam(model.parameters())
+model = model.RNNModel(args.model, ntokens, emsize, args.nhid, args.nlayers, args.batch_size, args.tied, lookup).to(device)
+print(model)
 
+optimizer = torch.optim.Adam(model.parameters())
 criterion = nn.CrossEntropyLoss()
 
 ###############################################################################
@@ -114,55 +120,53 @@ def repackage_hidden(h):
 # by the batchify function. The chunks are along dimension 0, corresponding
 # to the seq_len dimension in the LSTM.
 
-def get_batch(source, i):
-    seq_len = min(args.bptt, len(source) - 1 - i)
-    data = source[i:i+seq_len].clone()
-    blank_index = random.randint(0, seq_len-1)
-    target = data[blank_index].clone()
-    data[blank_index].fill_(len(idx2word) - 1)
-    return data, target
-
 def swap_blanks(batch, seq_lens):
-    return batch, None
+    targets = np.empty(len(batch))
+    batch = batch.clone()
+    for i in range(len(batch)):
+        if (seq_lens[i] == 0):
+            continue
+        blank_index = random.randint(0, seq_lens[i] - 1)
+        targets[i] = batch[i][blank_index]
+        batch[i][blank_index] = blank_idx
 
-def evaluate(mode_index):
+    return batch, targets
+
+def evaluate(mode):
     # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0.
     ntokens = len(idx2word)
-    hidden = model.init_hidden(args.batch_size)
     with torch.no_grad():
-        for (vectorized_seq, seq_len) in tqdm(dataloaders[mode_index], desc='{}:{}/{}'.format(modes[mode_index], epoch, args.epochs)):
-            data, targets = get_batch(vectorized_seq, seq_len)
-            output, hidden = model(data, hidden)
-            output = output
+        for (vectorized_seq, seq_len) in tqdm(dataloaders[mode], desc='{}:{}/{}'.format(mode, epoch, args.epochs)):
+            data, targets = swap_blanks(vectorized_seq, seq_len)
+            data = data.transpose_(0, 1)
+
+            output = model(data, seq_len)
 
             output_flat = output.view(-1, ntokens)
-            total_loss += len(data) * criterion(output_flat, targets).item()
-            hidden = repackage_hidden(hidden)
-    return total_loss / (data_sizes[mode_index] - 1)
+            total_loss += len(data) * criterion(output_flat, torch.from_numpy(targets).long().cuda()).item()
+    return total_loss / (data_sizes[mode] - 1)
 
 
 def train(epoch):
     # Turn on training mode which enables dropout.
+    mode = "train"
+
     model.train()
     total_loss = 0.
     start_time = time.time()
     ntokens = len(idx2word)
-    hidden = model.init_hidden(args.batch_size)
-
     batch = 0
-    for (vectorized_seq, seq_len) in tqdm(dataloaders[train_index], desc='{}:{}/{}'.format(modes[train_index], epoch, args.epochs)):
-        data, targets = get_batch(vectorized_seq, seq_len)
-        # Starting each batch, we detach the hidden state from how it was previously produced.
-        # If we didn't, the model would try backpropagating all the way to start of the dataset.
-        hidden = repackage_hidden(hidden)
+
+    for (vectorized_seq, seq_len) in tqdm(dataloaders[mode], desc='{}:{}/{}'.format(mode, epoch, args.epochs)):
+        data, targets = swap_blanks(vectorized_seq, seq_len)
+        data = data.transpose_(0, 1)
+
         model.zero_grad()
+        output = model(data, seq_len)
 
-        # import pdb; pdb.set_trace()
-        output, hidden = model(data, hidden)
-
-        loss = criterion(output.view(-1, ntokens), targets)
+        loss = criterion(output.view(-1, ntokens), torch.from_numpy(targets).long().cuda())
         loss.backward()
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
@@ -177,7 +181,7 @@ def train(epoch):
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
-                epoch, batch, data_sizes[train_index] // args.bptt,
+                epoch, batch, data_sizes[mode] // max_seq_length,
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             total_loss = 0
             start_time = time.time()
@@ -191,7 +195,7 @@ try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
         train(epoch)
-        val_loss = evaluate(valid_index)
+        val_loss = evaluate("valid")
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
@@ -215,7 +219,7 @@ with open(args.save, 'rb') as f:
     model.rnn.flatten_parameters()
 
 # Run on test data.
-test_loss = evaluate(test_index)
+test_loss = evaluate("test")
 print('=' * 89)
 print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
     test_loss, math.exp(test_loss)))

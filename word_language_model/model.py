@@ -1,14 +1,18 @@
+import torch
 import torch.nn as nn
 import embeddings
+from torch.autograd import Variable
+
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 # TODO: Use ELMo
 
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False, embed=None):
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, bsz, tie_weights=False, embed=None):
         super(RNNModel, self).__init__()
-        self.drop = nn.Dropout(dropout)
+        self.bsz = bsz
 
         if embed is None:
             self.encoder = nn.Embedding(ntoken, ninp)
@@ -16,14 +20,14 @@ class RNNModel(nn.Module):
             self.encoder = embed
 
         if rnn_type in ['LSTM', 'GRU']:
-            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
+            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers)
         else:
             try:
                 nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
             except KeyError:
                 raise ValueError( """An invalid option for `--model` was supplied,
                                  options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
-            self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity, dropout=dropout)
+            self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity)
         self.decoder = nn.Linear(nhid, ntoken)
 
         # Optionally tie weights as in:
@@ -51,17 +55,24 @@ class RNNModel(nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, input, hidden):
-        emb = (self.drop(self.encoder(input))).detach()
-        output, hidden = self.rnn(emb, hidden)
-        output = self.drop(output)[-1]
-        decoded = self.decoder(output)
-        return decoded, hidden
+    def forward(self, input, seq_len, hidden):
+        emb = (self.encoder(input)).detach()
 
-    def init_hidden(self, bsz):
+        seq_len, perm_idx = seq_len.sort(0, descending=True)
+        emb = emb[:,perm_idx]
+
+        packed_input = pack_padded_sequence(emb, seq_len.int().cpu().numpy())
+
+        _, hidden = self.rnn(packed_input, hidden)
+        decoded = self.decoder(hidden[-1][1])
+
+        _, unperm_idx = perm_idx.sort(0)
+        return decoded[unperm_idx]
+
+    def init_hidden(self, batch_size):
         weight = next(self.parameters())
         if self.rnn_type == 'LSTM':
-            return (weight.new_zeros(self.nlayers, bsz, self.nhid),
-                    weight.new_zeros(self.nlayers, bsz, self.nhid))
+            return (weight.new_zeros(self.nlayers, batch_size, self.nhid),
+                    weight.new_zeros(self.nlayers, batch_size, self.nhid))
         else:
-            return weight.new_zeros(self.nlayers, bsz, self.nhid)
+            return weight.new_zeros(self.nlayers, batch_size, self.nhid)

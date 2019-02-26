@@ -6,29 +6,30 @@
 ###############################################################################
 
 import argparse
-
+import numpy as np
 import torch
+import os
 
-import data
+import corpus
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model')
 
 # Model parameters.
-parser.add_argument('--dict_data', type=str, default='./data/wikitext-2',
-                    help='location of the corpus from which to load the dictionary')
-parser.add_argument('--data', type=str, default='./data/wikitext-2',
-                    help='location of the corpus from which to load the dictionary')
+parser.add_argument('--data', type=str, default='/data/course/cs2952d/rjha/data/rsa',
+                    help='location of the corpora and embeddings')
 parser.add_argument('--checkpoint', type=str, default='./model.pt',
                     help='model checkpoint to use')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
-parser.add_argument('--bptt', type=int, default=12,
-                    help='sequence length')
 parser.add_argument('--num_out', type=int, default=15,
                     help='number of alternatives to show')       
 args = parser.parse_args()
+
+# This is a function of the data file. Need to use make_dataset.py to make data files with 
+# a different maximal length.
+max_seq_length = 35
 
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
@@ -42,34 +43,34 @@ with open(args.checkpoint, 'rb') as f:
     model = torch.load(f).to(device)
 model.eval()
 
-corpus = data.Corpus(args.dict_data, args.data)
-print("yo")
+idx2word = np.load(os.path.join(args.data, "idx2word.npy")).item()
+word2idx = np.load(os.path.join(args.data, "word2idx.npy")).item()
 
-ntokens = len(corpus.dictionary)
-hidden = model.init_hidden(1)
-print("yo")
+ntokens = len(idx2word)
+unk_idx = word2idx["<unk>"]
 
-# Assumes "<blank>" is one of the words if we need a blank
+# Assumes "__" is one of the words if we need a blank
 def tokenize_str(str):
     words = str.split()
-    if len(words) >= args.bptt:
-        words = words[:args.bptt]
+    if len(words) >= max_seq_length:
+        words = words[:max_seq_length]
     
-    ids = [corpus.dictionary.get_id(word) for word in words]
+    ids = [word2idx.get(word, unk_idx) for word in words]
     return ids
 
-input_original = tokenize_str("They found lots of <blank> in the castle .")
+input_original = tokenize_str("He liked to <blank> .")
 input = []
 for token in input_original:
     input.append([token])
 input = torch.LongTensor(input).to(device)
 
 with torch.no_grad():  # no tracking history
-    output, hidden = model(input, hidden)
-    word_weights = output.squeeze().exp().to(device)
+    output = model(input, torch.LongTensor(np.asarray([len(input)])).to(device), model.init_hidden(1))
+    word_weights = output.squeeze().to(device)
     
     res = torch.topk(word_weights, args.num_out)
     top_ids = res[1]
     top_props = res[0]
+
     for i in range(args.num_out):
-        print("%s, %s" % (corpus.dictionary.idx2word[top_ids[i]], top_props[i]))
+        print("%s, %s" % (idx2word[top_ids.data[i].item()], top_props[i]))

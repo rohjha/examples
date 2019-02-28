@@ -164,7 +164,7 @@ def train(epoch):
         data = data.transpose_(0, 1)
 
         model.zero_grad()
-        output = model(data, seq_len)
+        output = model(data, seq_len, model.init_hidden(args.batch_size))
 
         loss = criterion(output.view(-1, ntokens), torch.from_numpy(targets).long().cuda())
         loss.backward()

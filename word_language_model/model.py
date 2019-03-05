@@ -5,8 +5,84 @@ from torch.autograd import Variable
 
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-# TODO: Use ELMo
+# TODO: Less shared code!
+# TODO: Prune unneded parameters to constructors
+# TODO: Does this work if not doing Glove?
+class EncoderRNN(nn.Module):
+    def __init__(self, ntoken, ninp, nhid, nlayers, bsz, embed=None):
+        super(EncoderRNN, self).__init__()
+        self.bsz = bsz
 
+        if embed is None:
+            self.embed = nn.Embedding(ntoken, ninp)
+        else:
+            self.embed = embed
+
+        self.rnn = getattr(nn, 'GRU')(ninp, nhid, nlayers)
+
+        from_scratch = embed == None
+        self.init_weights(from_scratch)
+
+        self.nhid = nhid
+        self.nlayers = nlayers
+
+    def forward(self, input, seq_len, hidden):
+        # TODO: We want to not backprop over these pre-trained embeddings
+        emb = self.embed(input)
+
+        seq_len, perm_idx = seq_len.sort(0, descending=True)
+        emb = emb[:,perm_idx]
+
+        packed_input = pack_padded_sequence(emb, seq_len.int().cpu().numpy())
+
+        _, hidden = self.rnn(packed_input, hidden)
+        return hidden[-1]
+
+    def init_weights(self, from_scratch):
+        initrange = 0.1
+        if (from_scratch):
+            self.embed.weight.data.uniform_(-initrange, initrange)
+
+    def init_hidden(self, batch_size):
+        weight = next(self.parameters())
+        return weight.new_zeros(self.nlayers, batch_size, self.nhid) 
+
+class DecoderRNN(nn.Module):
+    def __init__(self, ntoken, ninp, nhid, bsz, embed=None):
+        super(DecoderRNN, self).__init__()
+        self.bsz = bsz
+
+        if embed is None:
+            self.embed = nn.Embedding(ntoken, ninp)
+        else:
+            self.embed = embed
+
+        self.rnn = getattr(nn, 'GRU')(ninp, nhid, 1)
+        
+        self.out = nn.Linear(nhid, ntoken)
+        self.softmax = nn.LogSoftmax(dim=1)
+
+        from_scratch = embed == None
+        self.init_weights(from_scratch)
+
+        self.nhid = nhid
+
+    def forward(self, input, hidden):
+        # TODO: We want to not backprop over these pretrained embeddings
+        emb = self.embed(input)
+        output, hidden = self.rnn(emb, hidden)
+        output = self.softmax(self.out(output[0]))
+        return output, hidden
+
+    def init_weights(self, from_scratch):
+        initrange = 0.1
+        if (from_scratch):
+            self.embed.weight.data.uniform_(-initrange, initrange)
+
+        self.out.bias.data.zero_()
+        self.out.weight.data.uniform_(-initrange, initrange)
+
+# This is the old joint model
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 

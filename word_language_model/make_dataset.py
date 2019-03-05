@@ -13,6 +13,8 @@ parser.add_argument('--seed', type=int, default=29,
                     help='random seed to use')
 parser.add_argument('--max_seq_length', type=int, default=35,
                     help='if a sentence is longer than this, it will be thrown out')
+parser.add_argument('--max_seq_length', type=int, default=5,
+                    help='if a sentence is longer than this, it will be thrown out')
 args = parser.parse_args()
 
 assert os.path.exists(args.corpus_location)
@@ -39,7 +41,7 @@ with open(args.corpus_location, 'r') as orig, \
 
         words = line.lower().strip('\n').split(' ')
         orig_len = len(words)
-        if orig_len > args.max_seq_length:
+        if orig_len > args.max_seq_length or orig_len < args.min_seq_length:
             thrown_out += 1
             continue
 

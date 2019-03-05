@@ -58,7 +58,7 @@ def tokenize_str(str):
     ids = [word2idx.get(word, unk_idx) for word in words]
     return ids
 
-input_original = tokenize_str("He liked to <blank> .")
+input_original = tokenize_str("He likes to __ waffles off his plate .")
 input = []
 for token in input_original:
     input.append([token])

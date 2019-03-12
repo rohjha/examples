@@ -3,17 +3,17 @@ import os
 import random
 
 parser = argparse.ArgumentParser(description='Building Wiki dataset')
-parser.add_argument('--directory', type=str, default='/data/course/cs2952d/rjha/data/rsa/',
+parser.add_argument('--directory', type=str, default='/data/nlp/rjha/rsa',
                     help='location of the directory to store the final corpus files')
 parser.add_argument('--corpus_location', type=str, default='/data/nlp/atomicwikiedits/en/final-sentences-only.txt',
                     help='location (including filename) of the original corpus')
-parser.add_argument('--ratio', type=float, default=0.0006,
+parser.add_argument('--ratio', type=float, default=0.0012,
                     help='proportion of sentences to put in test and validation')
 parser.add_argument('--seed', type=int, default=29,
                     help='random seed to use')
-parser.add_argument('--max_seq_length', type=int, default=35,
+parser.add_argument('--max_seq_length', type=int, default=20,
                     help='if a sentence is longer than this, it will be thrown out')
-parser.add_argument('--max_seq_length', type=int, default=5,
+parser.add_argument('--min_seq_length', type=int, default=5,
                     help='if a sentence is longer than this, it will be thrown out')
 args = parser.parse_args()
 

@@ -25,7 +25,7 @@ class Elmo(nn.Module):
             https://github.com/allenai/allennlp/blob/master/allennlp/modules/elmo.py#L34
     """
 
-    def __init__(self, idx2word, device=torch.device('cpu')):
+    def __init__(self, idx2word, device=torch.device('cuda')):
         """ Load the ELMo model. The first time you run this, it will download a pretrained model. """
         super(Elmo, self).__init__()
         options = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"

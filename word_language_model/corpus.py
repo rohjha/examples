@@ -9,7 +9,7 @@ import pandas as pd
 from torch.utils.data import Dataset
 
 class Corpus(Dataset):
-    max_seq_length = 35
+    max_seq_length = 20
 
     """
     This is the Dataset class for this net. When initializing the dataset we

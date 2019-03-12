@@ -9,7 +9,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 # TODO: Prune unneded parameters to constructors
 # TODO: Does this work if not doing Glove?
 class EncoderRNN(nn.Module):
-    def __init__(self, ntoken, ninp, nhid, nlayers, bsz, embed=None):
+    def __init__(self, ntoken, ninp, nhid, nlayers, bsz, embed=None, dropout_p=0.1):
         super(EncoderRNN, self).__init__()
         self.bsz = bsz
 
@@ -18,7 +18,7 @@ class EncoderRNN(nn.Module):
         else:
             self.embed = embed
 
-        self.rnn = getattr(nn, 'GRU')(ninp, nhid, nlayers)
+        self.rnn = getattr(nn, 'LSTM')(ninp, nhid, nlayers)
 
         from_scratch = embed == None
         self.init_weights(from_scratch)
@@ -26,17 +26,22 @@ class EncoderRNN(nn.Module):
         self.nhid = nhid
         self.nlayers = nlayers
 
+        self.dropout = nn.Dropout(dropout_p)
+
     def forward(self, input, seq_len, hidden):
         # TODO: We want to not backprop over these pre-trained embeddings
-        emb = self.embed(input)
-
+        with torch.no_grad():
+            emb = self.dropout(self.embed(input))
+        
         seq_len, perm_idx = seq_len.sort(0, descending=True)
         emb = emb[:,perm_idx]
 
         packed_input = pack_padded_sequence(emb, seq_len.int().cpu().numpy())
 
         _, hidden = self.rnn(packed_input, hidden)
-        return hidden[-1]
+        
+        _, unperm_idx = perm_idx.sort(0)
+        return (hidden[0][:,unperm_idx], hidden[1][:,unperm_idx])
 
     def init_weights(self, from_scratch):
         initrange = 0.1
@@ -45,10 +50,11 @@ class EncoderRNN(nn.Module):
 
     def init_hidden(self, batch_size):
         weight = next(self.parameters())
-        return weight.new_zeros(self.nlayers, batch_size, self.nhid) 
+        return (weight.new_zeros(self.nlayers, batch_size, self.nhid),
+            weight.new_zeros(self.nlayers, batch_size, self.nhid))
 
 class DecoderRNN(nn.Module):
-    def __init__(self, ntoken, ninp, nhid, bsz, embed=None):
+    def __init__(self, ntoken, ninp, nhid, bsz, embed=None, dropout_p=0.1):
         super(DecoderRNN, self).__init__()
         self.bsz = bsz
 
@@ -57,7 +63,7 @@ class DecoderRNN(nn.Module):
         else:
             self.embed = embed
 
-        self.rnn = getattr(nn, 'GRU')(ninp, nhid, 1)
+        self.rnn = getattr(nn, 'LSTM')(ninp, nhid, 2)
         
         self.out = nn.Linear(nhid, ntoken)
         self.softmax = nn.LogSoftmax(dim=1)
@@ -66,10 +72,11 @@ class DecoderRNN(nn.Module):
         self.init_weights(from_scratch)
 
         self.nhid = nhid
+        self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, input, hidden):
-        # TODO: We want to not backprop over these pretrained embeddings
-        emb = self.embed(input)
+        with torch.no_grad():
+            emb = self.dropout(self.embed(input))
         output, hidden = self.rnn(emb, hidden)
         output = self.softmax(self.out(output[0]))
         return output, hidden
@@ -104,7 +111,30 @@ class RNNModel(nn.Module):
                 raise ValueError( """An invalid option for `--model` was supplied,
                                  options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
             self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity)
+
+        # orig_new
+        '''
         self.decoder = nn.Linear(nhid, ntoken)
+        '''
+
+        # orig_new_big
+        '''
+        self.l1 = nn.Linear(nhid, nhid)
+        self.l2 = nn.Linear(nhid, ntoken)
+        self.decoder = nn.Sequential(
+                        nn.Linear(nhid, nhid),
+                        nn.ReLU(),
+                        nn.Linear(nhid, ntoken))
+        '''
+
+        # orig_new_big_dropout
+        self.l1 = nn.Linear(nhid, nhid)
+        self.l2 = nn.Linear(nhid, ntoken)
+        self.decoder = nn.Sequential(
+                        nn.Linear(nhid, nhid),
+                        nn.ReLU(),
+                        nn.Dropout(0.2),
+                        nn.Linear(nhid, ntoken))
 
         # Optionally tie weights as in:
         # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
@@ -128,8 +158,19 @@ class RNNModel(nn.Module):
         initrange = 0.1
         if (from_scratch):
             self.encoder.weight.data.uniform_(-initrange, initrange)
+
+        # orig_new
+        '''
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
+        '''
+
+        # orig_new_big and orig_new_dropout
+        self.l1.bias.data.zero_()
+        self.l1.weight.data.uniform_(-initrange, initrange)
+        self.l2.bias.data.zero_()
+        self.l2.weight.data.uniform_(-initrange, initrange)
+
 
     def forward(self, input, seq_len, hidden):
         emb = (self.encoder(input)).detach()
@@ -140,7 +181,7 @@ class RNNModel(nn.Module):
         packed_input = pack_padded_sequence(emb, seq_len.int().cpu().numpy())
 
         _, hidden = self.rnn(packed_input, hidden)
-        decoded = self.decoder(hidden[-1][1])
+        decoded = self.decoder(hidden[0][1])
 
         _, unperm_idx = perm_idx.sort(0)
         return decoded[unperm_idx]

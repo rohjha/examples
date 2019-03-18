@@ -70,6 +70,9 @@ class Glove(nn.Module):
         self.idx2word = idx2word
         self.embed_size = sizes["glove"]
 
+        # This is hacky but probably okay
+        embeddings_np[self.glove_vocab['__']] = np.zeros(200)
+
         # 3. Create a torch tensor of the glove vectors and construct a
         #    a nn.Embedding out of it (hint: see how RandEmbed does it)
         self.embeddings = nn.Embedding.from_pretrained(torch.from_numpy(embeddings_np)) # nn.Embedding layer

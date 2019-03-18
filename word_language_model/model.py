@@ -93,7 +93,7 @@ class DecoderRNN(nn.Module):
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, bsz, tie_weights=False, embed=None):
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, bsz, tie_weights=False, embed=None, bidir=False):
         super(RNNModel, self).__init__()
         self.bsz = bsz
 
@@ -103,7 +103,7 @@ class RNNModel(nn.Module):
             self.encoder = embed
 
         if rnn_type in ['LSTM', 'GRU']:
-            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers)
+            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, bidirectional=bidir)
         else:
             try:
                 nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
@@ -112,29 +112,12 @@ class RNNModel(nn.Module):
                                  options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
             self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity)
 
-        # orig_new
-        '''
-        self.decoder = nn.Linear(nhid, ntoken)
-        '''
+        if bidir:
+            self.decoder = nn.Linear(2 * nhid, ntoken)
+        else:
+            self.decoder = nn.Linear(nhid, ntoken)
 
-        # orig_new_big
-        '''
-        self.l1 = nn.Linear(nhid, nhid)
-        self.l2 = nn.Linear(nhid, ntoken)
-        self.decoder = nn.Sequential(
-                        nn.Linear(nhid, nhid),
-                        nn.ReLU(),
-                        nn.Linear(nhid, ntoken))
-        '''
-
-        # orig_new_big_dropout
-        self.l1 = nn.Linear(nhid, nhid)
-        self.l2 = nn.Linear(nhid, ntoken)
-        self.decoder = nn.Sequential(
-                        nn.Linear(nhid, nhid),
-                        nn.ReLU(),
-                        nn.Dropout(0.2),
-                        nn.Linear(nhid, ntoken))
+        self.bidir = bidir
 
         # Optionally tie weights as in:
         # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
@@ -159,29 +142,27 @@ class RNNModel(nn.Module):
         if (from_scratch):
             self.encoder.weight.data.uniform_(-initrange, initrange)
 
-        # orig_new
-        '''
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
-        '''
-
-        # orig_new_big and orig_new_dropout
-        self.l1.bias.data.zero_()
-        self.l1.weight.data.uniform_(-initrange, initrange)
-        self.l2.bias.data.zero_()
-        self.l2.weight.data.uniform_(-initrange, initrange)
-
 
     def forward(self, input, seq_len, hidden):
         emb = (self.encoder(input)).detach()
 
         seq_len, perm_idx = seq_len.sort(0, descending=True)
-        emb = emb[:,perm_idx]
+        emb = emb[:, perm_idx]
 
         packed_input = pack_padded_sequence(emb, seq_len.int().cpu().numpy())
 
         _, hidden = self.rnn(packed_input, hidden)
-        decoded = self.decoder(hidden[0][1])
+
+        if self.bidir:
+            # NOTE: Unfortunately need to change 'self.bsz' to one when testing bidirectional models
+            hidden = hidden[0].view(self.nlayers, 2, 1, self.nhid)
+            hidden_forward = hidden[1][0]
+            hidden_backward = hidden[1][1]
+            decoded = self.decoder(torch.cat((hidden_forward, hidden_backward), 1))
+        else:
+            decoded = self.decoder(hidden[0][1])
 
         _, unperm_idx = perm_idx.sort(0)
         return decoded[unperm_idx]
@@ -189,7 +170,11 @@ class RNNModel(nn.Module):
     def init_hidden(self, batch_size):
         weight = next(self.parameters())
         if self.rnn_type == 'LSTM':
-            return (weight.new_zeros(self.nlayers, batch_size, self.nhid),
-                    weight.new_zeros(self.nlayers, batch_size, self.nhid))
+            if self.bidir:
+                return (weight.new_zeros(self.nlayers * 2, batch_size, self.nhid),
+                        weight.new_zeros(self.nlayers * 2, batch_size, self.nhid))
+            else:
+                return (weight.new_zeros(self.nlayers, batch_size, self.nhid),
+                        weight.new_zeros(self.nlayers, batch_size, self.nhid))
         else:
             return weight.new_zeros(self.nlayers, batch_size, self.nhid)

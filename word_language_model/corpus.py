@@ -15,7 +15,7 @@ class Corpus(Dataset):
     This is the Dataset class for this net. When initializing the dataset we
     specify mode "train", "dev", or "test".
     """
-    def __init__(self, data_dir, mode):
+    def __init__(self, data_dir, mode, use_small=False):
         print("Loading dataset for {}".format(mode))
 
         print("Loading word2idx into Numpy")
@@ -24,7 +24,12 @@ class Corpus(Dataset):
 
         print("Loaded {} words".format(len(self.word2idx)))
 
-        with open(path.join(data_dir, mode+".txt")) as f:
+        if use_small:
+            postfix = "_small.txt"
+        else:
+            postfix = ".txt"
+
+        with open(path.join(data_dir, mode+postfix)) as f:
             line_count = 0
             for line in f:
                 line_count += 1
@@ -32,7 +37,7 @@ class Corpus(Dataset):
             self.seqs = np.empty((line_count, self.max_seq_length))
             self.lens = np.empty(line_count)
 
-        with open(path.join(data_dir, mode+".txt")) as f:
+        with open(path.join(data_dir, mode+postfix)) as f:
             i = 0
             for line in f:
                 line_split = line.split('|')
@@ -59,6 +64,7 @@ class Corpus(Dataset):
     def __len__(self):
         """ Returns the length of the data (number of sentences) """
         return self.seqs.shape[0]
+
 
     def __getitem__(self, idx):
         """ Given an index, returns the vectorized sentence and the original length

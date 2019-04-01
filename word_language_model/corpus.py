@@ -15,7 +15,7 @@ class Corpus(Dataset):
     This is the Dataset class for this net. When initializing the dataset we
     specify mode "train", "dev", or "test".
     """
-    def __init__(self, data_dir, mode, use_small=False):
+    def __init__(self, data_dir, mode, dataset="stories", use_small=False):
         print("Loading dataset for {}".format(mode))
 
         print("Loading word2idx into Numpy")
@@ -23,11 +23,12 @@ class Corpus(Dataset):
         self.unk_idx = self.word2idx['<unk>']
 
         print("Loaded {} words".format(len(self.word2idx)))
-
+        
+        postfix = "_" + dataset
         if use_small:
-            postfix = "_small.txt"
-        else:
-            postfix = ".txt"
+            postfix += "_small"
+        
+        postfix += ".txt"
 
         with open(path.join(data_dir, mode+postfix)) as f:
             line_count = 0

@@ -26,7 +26,7 @@ class Bert(nn.Module):
     
     def forward(self, batch):
         # TODO: fill this in
-        batch_as_words = [[self.idx2word[token] for token in l] for l in batch.transpose(0, 1).tolist()]
+        batch_as_words = [[str(self.idx2word[token]) for token in l] for l in batch.transpose(0, 1).tolist()]
         batch_as_sentences = [Sentence(' '.join(l)) for l in batch_as_words]
         embeds = self.bert.embed(batch_as_sentences)
         embeds = [[token.embedding for token in sentence] for sentence in embeds]
@@ -60,11 +60,11 @@ class Glove(nn.Module):
             param.requires_grad = False
 
         self._dev = device
-
+        
     def _lookup_glove(self, word_id):
         # given a word_id, convert to string and get glove id from the string:
         # unk if necessary.
-        return self.glove_vocab.get(self.idx2word[word_id].lower(), self.glove_vocab["unk"])
+        return self.glove_vocab.get(str(self.idx2word[word_id]).lower(), self.glove_vocab["unk"])
 
     def _get_gloveids(self, batch):
         # import pdb; pdb.set_trace()

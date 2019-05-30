@@ -9,16 +9,19 @@ import pandas as pd
 from torch.utils.data import Dataset
 
 class Corpus(Dataset):
-    max_seq_length = 20
-
     """
     This is the Dataset class for this net. When initializing the dataset we
     specify mode "train", "dev", or "test".
     """
-    def __init__(self, data_dir, mode, dataset="stories", use_small=False):
+    def __init__(self, data_dir, mode, dataset="stories", use_small=False, use_pairs=False):
         print("Loading dataset for {}".format(mode))
-
         print("Loading word2idx into Numpy")
+
+        if use_pairs:
+            max_seq_length = 40
+        else:
+            max_seq_length = 20
+
         self.word2idx = np.load(path.join(data_dir, "word2idx.npy")).item()
         self.unk_idx = self.word2idx['<unk>']
 
@@ -27,6 +30,9 @@ class Corpus(Dataset):
         postfix = "_" + dataset
         if use_small:
             postfix += "_small"
+
+        if use_pairs:
+            postfix += "_pairs"
         
         postfix += ".txt"
 
@@ -35,7 +41,7 @@ class Corpus(Dataset):
             for line in f:
                 line_count += 1
             
-            self.seqs = np.empty((line_count, self.max_seq_length))
+            self.seqs = np.empty((line_count, max_seq_length))
             self.lens = np.empty(line_count)
 
         with open(path.join(data_dir, mode+postfix)) as f:

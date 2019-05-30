@@ -18,15 +18,26 @@ from flair.data import Sentence
 sizes = {"glove": 200, "bert": 768}
 
 class Bert(nn.Module):
-    def __init__(self, idx2word, device=torch.device('cpu')):
+    def __init__(self, idx2word, device=torch.device('cpu'), mask_token="[MASK]", replace_periods=True):
         super(Bert, self).__init__()
         self.idx2word = idx2word
         self.embed_size = sizes["bert"]
         self.bert = BertEmbeddings('bert-base-uncased', '-2')
+        self.mask_token = mask_token
+        self.replace_periods = replace_periods
     
+    def proc(self, string):
+        if hasattr(self, 'replace_periods') and self.replace_periods and string == '.':
+            return "[SEP]"
+        
+        if hasattr(self, 'mask_tokens') and string == "__":
+            return self.mask_token
+
+        return string
+
     def forward(self, batch):
         # TODO: fill this in
-        batch_as_words = [[str(self.idx2word[token]) for token in l] for l in batch.transpose(0, 1).tolist()]
+        batch_as_words = [[self.proc(str(self.idx2word[token])) for token in l] for l in batch.transpose(0, 1).tolist()]
         batch_as_sentences = [Sentence(' '.join(l)) for l in batch_as_words]
         embeds = self.bert.embed(batch_as_sentences)
         embeds = [[token.embedding for token in sentence] for sentence in embeds]

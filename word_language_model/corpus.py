@@ -13,30 +13,20 @@ class Corpus(Dataset):
     This is the Dataset class for this net. When initializing the dataset we
     specify mode "train", "dev", or "test".
     """
-    def __init__(self, data_dir, mode, dataset="stories", use_small=False, use_pairs=False):
+    def __init__(self, data_dir, mode, use_small=False, num_sentences=1):
         print("Loading dataset for {}".format(mode))
         print("Loading word2idx into Numpy")
 
-        if use_pairs:
-            max_seq_length = 40
-        else:
-            max_seq_length = 20
+        max_seq_length = 20 * num_sentences
 
         self.word2idx = np.load(path.join(data_dir, "word2idx.npy")).item()
         self.unk_idx = self.word2idx['<unk>']
 
         print("Loaded {} words".format(len(self.word2idx)))
-        
-        postfix = "_" + dataset
-        if use_small:
-            postfix += "_small"
+      
+        file_name = "{}_stories_{}.txt".format(mode, num_sentences)
 
-        if use_pairs:
-            postfix += "_pairs"
-        
-        postfix += ".txt"
-
-        with open(path.join(data_dir, mode+postfix)) as f:
+        with open(path.join(data_dir, file_name)) as f:
             line_count = 0
             for line in f:
                 line_count += 1
@@ -44,7 +34,7 @@ class Corpus(Dataset):
             self.seqs = np.empty((line_count, max_seq_length))
             self.lens = np.empty(line_count)
 
-        with open(path.join(data_dir, mode+postfix)) as f:
+        with open(path.join(data_dir, file_name)) as f:
             i = 0
             for line in f:
                 line_split = line.split('|')

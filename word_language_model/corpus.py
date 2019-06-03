@@ -13,7 +13,7 @@ class Corpus(Dataset):
     This is the Dataset class for this net. When initializing the dataset we
     specify mode "train", "dev", or "test".
     """
-    def __init__(self, data_dir, mode, use_small=False, num_sentences=1):
+    def __init__(self, data_dir, mode, num_sentences=1):
         print("Loading dataset for {}".format(mode))
         print("Loading word2idx into Numpy")
 
